@@ -1,6 +1,7 @@
 import { useState, useRef } from 'react';
-import { X, Link, BadgeCheck } from 'lucide-react';
+import { X, Link } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
+import { supabase } from '../../lib/supabaseClient';
 
 export default function EditProfile({ onClose }) {
   const { user, updateUser } = useAuth();
@@ -10,8 +11,11 @@ export default function EditProfile({ onClose }) {
     bio: user?.bio || '',
     website: user?.website || '',
   });
+  const [avatarPreview, setAvatarPreview] = useState(user?.avatar || '');
+  const [avatarFile, setAvatarFile] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [success, setSuccess] = useState('');
   const fileInputRef = useRef(null);
 
   const handleChange = (field) => (e) => {
@@ -26,15 +30,15 @@ export default function EditProfile({ onClose }) {
   const handlePhotoChange = (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
-
     if (!file.type.startsWith('image/')) {
       setError('Please select an image file.');
       return;
     }
-
+    // Show preview immediately
     const reader = new FileReader();
     reader.onload = (event) => {
-      updateUser({ avatar: event.target.result });
+      setAvatarPreview(event.target.result);
+      setAvatarFile(file);
     };
     reader.readAsDataURL(file);
   };
@@ -45,11 +49,36 @@ export default function EditProfile({ onClose }) {
       setError('Name and username are required.');
       return;
     }
+    if (!/^[a-zA-Z0-9._]+$/.test(form.username)) {
+      setError('Username can only contain letters, numbers, dots and underscores.');
+      return;
+    }
     setLoading(true);
-    await new Promise(r => setTimeout(r, 800));
-    updateUser({ ...form });
-    setLoading(false);
-    onClose();
+    setError('');
+    try {
+      // If new avatar file selected, upload it
+      if (avatarFile) {
+        const ext = avatarFile.name?.split('.').pop() || 'jpg';
+        const path = `${user.id}/${Date.now()}.${ext}`;
+        const { data, uploadError } = await supabase.storage.from('avatars').upload(path, avatarFile, {
+          cacheControl: '3600',
+          upsert: true,
+          contentType: avatarFile.type,
+        });
+        if (uploadError) throw uploadError;
+        const { data: urlData } = supabase.storage.from('avatars').getPublicUrl(data.path);
+        await updateUser({ ...form, avatar: urlData.publicUrl });
+      } else {
+        await updateUser({ ...form });
+      }
+      setSuccess('Profile updated! ✓');
+      setTimeout(() => onClose(), 800);
+    } catch (err) {
+      console.error('EditProfile submit error:', err);
+      setError('Failed to save profile. Please try again.');
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -63,10 +92,24 @@ export default function EditProfile({ onClose }) {
         <div className="modal-body">
           <form className="edit-profile-form" onSubmit={handleSubmit} id="edit-profile-form">
             <div className="edit-avatar-section">
-              <img src={user?.avatar} alt="avatar" className="avatar" style={{ width: 52, height: 52 }} />
+              <div style={{ position: 'relative', display: 'inline-block' }}>
+                <img
+                  src={avatarPreview || user?.avatar}
+                  alt="avatar"
+                  className="avatar"
+                  style={{ width: 72, height: 72, border: '3px solid var(--border-light)' }}
+                />
+                {loading && (
+                  <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.5)', borderRadius: '50%' }}>
+                    <span className="spinner" style={{ width: 20, height: 20, borderWidth: 2 }} />
+                  </div>
+                )}
+              </div>
               <div>
                 <div className="username">{user?.username}</div>
-                <button type="button" className="change-photo-btn" onClick={handlePhotoClick}>Change profile photo</button>
+                <button type="button" className="change-photo-btn" onClick={handlePhotoClick} disabled={loading}>
+                  Change profile photo
+                </button>
                 <input
                   type="file"
                   ref={fileInputRef}
@@ -77,9 +120,8 @@ export default function EditProfile({ onClose }) {
               </div>
             </div>
 
-            {error && (
-              <div className="login-error">{error}</div>
-            )}
+            {error && <div className="login-error">{error}</div>}
+            {success && <div style={{ color: '#22c55e', fontSize: 13, padding: '8px 12px', background: 'rgba(34,197,94,0.1)', borderRadius: 8, marginBottom: 8 }}>{success}</div>}
 
             <div className="form-group">
               <label className="form-label" htmlFor="ep-name">Name</label>
@@ -108,9 +150,12 @@ export default function EditProfile({ onClose }) {
         </div>
 
         <div className="modal-footer">
-          <button type="button" className="btn btn-secondary" onClick={onClose}>Cancel</button>
+          <button type="button" className="btn btn-secondary" onClick={onClose} disabled={loading}>Cancel</button>
           <button type="submit" form="edit-profile-form" className="btn btn-primary" disabled={loading}>
-            {loading ? 'Saving...' : 'Save Changes'}
+            {loading
+              ? <><span className="spinner" style={{ width: 14, height: 14, borderWidth: 2 }} /> Saving...</>
+              : 'Save Changes'
+            }
           </button>
         </div>
       </div>

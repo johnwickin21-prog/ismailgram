@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { useAuth } from './context/AuthContext';
 import { useApp } from './context/AppContext';
@@ -53,6 +53,16 @@ function ProtectedLayout() {
 
 function AuthGuard() {
   const { user, loading } = useAuth();
+  const { initData, clearData } = useApp();
+
+  // Initialize data when user logs in, clear when logs out
+  useEffect(() => {
+    if (user?.id) {
+      initData(user.id);
+    } else if (!loading) {
+      clearData();
+    }
+  }, [user?.id, loading]);
 
   if (loading) {
     return (
@@ -79,7 +89,7 @@ export default function App() {
   return (
     <Routes>
       <Route path="/login" element={user ? <Navigate to="/" replace /> : <Login />} />
-      <Route path="/*" element={user ? <ProtectedLayout /> : <Navigate to="/login" replace />} />
+      <Route path="/*" element={<AuthGuard />} />
     </Routes>
   );
 }

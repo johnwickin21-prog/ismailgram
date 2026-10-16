@@ -7,6 +7,8 @@ import {
 } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import { useAuth } from '../../context/AuthContext';
+import { supabase } from '../../lib/supabaseClient';
+import { createPost } from '../../lib/db';
 
 /* ─── Image filters ─────────────────────────────────────────── */
 const IMAGE_FILTERS = [
@@ -34,11 +36,24 @@ const AUDIENCE_OPTIONS = [
   { id: 'private', label: 'Only me', icon: Lock },
 ];
 
+async function uploadFileToStorage(bucket, file, folder) {
+  const ext = file.name?.split('.').pop() || (file.type?.split('/')[1]) || 'jpg';
+  const path = `${folder}${Date.now()}_${Math.random().toString(36).slice(2)}.${ext}`;
+  const { data, error } = await supabase.storage.from(bucket).upload(path, file, {
+    cacheControl: '3600',
+    upsert: false,
+    contentType: file.type,
+  });
+  if (error) throw error;
+  const { data: urlData } = supabase.storage.from(bucket).getPublicUrl(data.path);
+  return urlData.publicUrl;
+}
+
 export default function CreatePost({ onClose }) {
   const { addPost, showToast } = useApp();
   const { user } = useAuth();
 
-  // Steps: upload → media-type → edit → share
+  // Steps: upload → edit → share
   const [step, setStep] = useState('upload');
   const [mediaType, setMediaType] = useState(null); // 'image' | 'video'
   const [previewUrl, setPreviewUrl] = useState(null);
@@ -58,7 +73,7 @@ export default function CreatePost({ onClose }) {
   const [videoSpeed, setVideoSpeed] = useState(1);
   const [videoVolume, setVideoVolume] = useState(1);
   const [trimStart, setTrimStart] = useState(0);
-  const [trimEnd, setTrimEnd] = useState(100); // percentage
+  const [trimEnd, setTrimEnd] = useState(100);
   const [videoFilter, setVideoFilter] = useState('none');
 
   // Share step
@@ -67,6 +82,7 @@ export default function CreatePost({ onClose }) {
   const [audience, setAudience] = useState('everyone');
   const [altText, setAltText] = useState('');
   const [loading, setLoading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState('');
 
   const fileRef = useRef(null);
   const videoFileRef = useRef(null);
@@ -135,24 +151,29 @@ export default function CreatePost({ onClose }) {
 
   const currentVideoFilterCSS = IMAGE_FILTERS.find(f => f.id === videoFilter)?.css;
 
-  /* ── Share ── */
+  /* ── Share — uploads to Supabase Storage then saves post ── */
   const handleShare = async () => {
-    if (!previewUrl) return;
+    if (!file || !user) return;
     setLoading(true);
-    await new Promise(r => setTimeout(r, 1400));
-    addPost({
-      id: 'p_' + Date.now(),
-      user: { ...user },
-      image: previewUrl,
-      caption: caption.trim() || '📸',
-      likes: 0, liked: false, saved: false, comments: [],
-      location: location.trim() || null,
-      timestamp: 'Just now',
-      isVideo: mediaType === 'video',
-    });
-    setLoading(false);
-    showToast(mediaType === 'video' ? 'Reel shared! 🎬' : 'Post shared! 🎉');
-    onClose();
+    try {
+      setUploadProgress('Uploading media...');
+      const bucket = mediaType === 'video' ? 'posts' : 'posts';
+      const imageUrl = await uploadFileToStorage(bucket, file, `${user.id}/`);
+
+      setUploadProgress('Saving post...');
+      await createPost(user.id, imageUrl, caption.trim() || '📸', location.trim() || null, mediaType === 'video', audience);
+
+      // Reload posts via context
+      await addPost({});
+      showToast(mediaType === 'video' ? 'Reel shared! 🎬' : 'Post shared! 🎉');
+      onClose();
+    } catch (err) {
+      console.error('handleShare error:', err);
+      showToast('Failed to share. Please try again.');
+    } finally {
+      setLoading(false);
+      setUploadProgress('');
+    }
   };
 
   /* ── Step title ── */
@@ -193,7 +214,6 @@ export default function CreatePost({ onClose }) {
           {/* ══════════ UPLOAD STEP ══════════ */}
           {step === 'upload' && (
             <div className="cp-upload-area">
-              {/* Drop zone */}
               <div
                 className="cp-drop-zone"
                 onDrop={handleDrop}
@@ -332,7 +352,6 @@ export default function CreatePost({ onClose }) {
               {/* ── VIDEO EDITOR ── */}
               {mediaType === 'video' && (
                 <div className="cp-video-editor">
-                  {/* Video preview */}
                   <div className="cp-video-preview-wrap">
                     <video
                       ref={videoRef}
@@ -344,7 +363,6 @@ export default function CreatePost({ onClose }) {
                       onEnded={() => setVideoPlaying(false)}
                       playsInline
                     />
-                    {/* Play overlay */}
                     <button
                       id="cp-video-play-btn"
                       className="cp-video-play-overlay"
@@ -355,11 +373,8 @@ export default function CreatePost({ onClose }) {
                     </button>
                   </div>
 
-                  {/* Timeline scrubber */}
                   <div className="cp-timeline">
-                    <span className="cp-time-label">
-                      {Math.floor(videoCurrentTime)}s
-                    </span>
+                    <span className="cp-time-label">{Math.floor(videoCurrentTime)}s</span>
                     <input
                       id="cp-video-scrubber"
                       type="range"
@@ -369,92 +384,42 @@ export default function CreatePost({ onClose }) {
                       value={videoDuration ? (videoCurrentTime / videoDuration) * 100 : 0}
                       onChange={handleScrub}
                     />
-                    <span className="cp-time-label">
-                      {Math.floor(videoDuration)}s
-                    </span>
+                    <span className="cp-time-label">{Math.floor(videoDuration)}s</span>
                   </div>
 
-                  {/* Trim bar */}
                   <div className="cp-trim-section">
-                    <div className="cp-trim-label">
-                      <Scissors size={14} /> Trim
-                    </div>
+                    <div className="cp-trim-label"><Scissors size={14} /> Trim</div>
                     <div className="cp-trim-bar">
                       <div className="cp-trim-fill" style={{ left: `${trimStart}%`, width: `${trimEnd - trimStart}%` }} />
-                      <input
-                        id="cp-trim-start"
-                        type="range"
-                        className="cp-trim-handle"
-                        min={0} max={trimEnd - 5}
-                        value={trimStart}
-                        onChange={e => setTrimStart(Number(e.target.value))}
-                      />
-                      <input
-                        id="cp-trim-end"
-                        type="range"
-                        className="cp-trim-handle"
-                        min={trimStart + 5} max={100}
-                        value={trimEnd}
-                        onChange={e => setTrimEnd(Number(e.target.value))}
-                      />
+                      <input id="cp-trim-start" type="range" className="cp-trim-handle" min={0} max={trimEnd - 5} value={trimStart} onChange={e => setTrimStart(Number(e.target.value))} />
+                      <input id="cp-trim-end" type="range" className="cp-trim-handle" min={trimStart + 5} max={100} value={trimEnd} onChange={e => setTrimEnd(Number(e.target.value))} />
                     </div>
-                    <span className="cp-trim-info">
-                      {videoDuration ? `${((trimEnd - trimStart) / 100 * videoDuration).toFixed(1)}s selected` : '—'}
-                    </span>
+                    <span className="cp-trim-info">{videoDuration ? `${((trimEnd - trimStart) / 100 * videoDuration).toFixed(1)}s selected` : '—'}</span>
                   </div>
 
-                  {/* Speed */}
                   <div className="cp-speed-section">
-                    <div className="cp-speed-label">
-                      <FastForward size={14} /> Speed
-                    </div>
+                    <div className="cp-speed-label"><FastForward size={14} /> Speed</div>
                     <div className="cp-speed-chips">
                       {SPEED_OPTIONS.map(s => (
-                        <button
-                          key={s}
-                          id={`cp-speed-${String(s).replace('.', '_')}`}
-                          className={`cp-speed-chip ${videoSpeed === s ? 'active' : ''}`}
-                          onClick={() => handleSpeedChange(s)}
-                        >
-                          {s}x
-                        </button>
+                        <button key={s} id={`cp-speed-${String(s).replace('.', '_')}`} className={`cp-speed-chip ${videoSpeed === s ? 'active' : ''}`} onClick={() => handleSpeedChange(s)}>{s}x</button>
                       ))}
                     </div>
                   </div>
 
-                  {/* Volume */}
                   <div className="cp-adjust-row">
                     <div className="cp-adjust-label">
                       {videoVolume === 0 ? <VolumeX size={16} /> : <Volume2 size={16} />}
                       <span>Volume</span>
                     </div>
-                    <input
-                      id="cp-video-volume"
-                      type="range"
-                      className="cp-slider"
-                      min={0} max={1} step={0.05}
-                      value={videoVolume}
-                      onChange={e => handleVolumeChange(Number(e.target.value))}
-                    />
+                    <input id="cp-video-volume" type="range" className="cp-slider" min={0} max={1} step={0.05} value={videoVolume} onChange={e => handleVolumeChange(Number(e.target.value))} />
                     <span className="cp-adjust-val">{Math.round(videoVolume * 100)}%</span>
                   </div>
 
-                  {/* Video filters */}
-                  <div className="cp-vid-filter-label">
-                    <Sparkles size={14} /> Filters
-                  </div>
+                  <div className="cp-vid-filter-label"><Sparkles size={14} /> Filters</div>
                   <div className="cp-filter-strip">
                     {IMAGE_FILTERS.map(f => (
-                      <button
-                        key={f.id}
-                        id={`cp-vfilter-${f.id}`}
-                        className={`cp-filter-thumb ${videoFilter === f.id ? 'active' : ''}`}
-                        onClick={() => setVideoFilter(f.id)}
-                      >
-                        <div
-                          className="cp-filter-color-swatch"
-                          style={{ background: f.id === 'mono' ? '#888' : f.id === 'warm' ? '#f97316' : f.id === 'cool' ? '#60a5fa' : f.id === 'vivid' ? '#a855f7' : f.id === 'noir' ? '#111' : f.id === 'fade' ? '#e5e7eb' : f.id === 'vintage' ? '#b45309' : 'var(--gradient-btn)' }}
-                        />
+                      <button key={f.id} id={`cp-vfilter-${f.id}`} className={`cp-filter-thumb ${videoFilter === f.id ? 'active' : ''}`} onClick={() => setVideoFilter(f.id)}>
+                        <div className="cp-filter-color-swatch" style={{ background: f.id === 'moon' ? '#888' : f.id === 'juno' ? '#f97316' : f.id === 'lark' ? '#60a5fa' : f.id === 'clarendon' ? '#a855f7' : f.id === 'slumber' ? '#111' : f.id === 'gingham' ? '#e5e7eb' : f.id === 'reyes' ? '#b45309' : 'var(--gradient-btn)' }} />
                         <span>{f.label}</span>
                       </button>
                     ))}
@@ -467,21 +432,14 @@ export default function CreatePost({ onClose }) {
           {/* ══════════ SHARE STEP ══════════ */}
           {step === 'share' && (
             <div className="cp-share-area">
-              {/* Preview thumbnail */}
               <div className="cp-share-preview">
                 {mediaType === 'image' ? (
-                  <img
-                    src={previewUrl}
-                    alt="preview"
-                    className="cp-share-thumb"
-                    style={{ filter: getImageFilterCSS() }}
-                  />
+                  <img src={previewUrl} alt="preview" className="cp-share-thumb" style={{ filter: getImageFilterCSS() }} />
                 ) : (
                   <video src={previewUrl} className="cp-share-thumb" muted playsInline />
                 )}
               </div>
 
-              {/* Caption */}
               <div className="cp-share-caption-wrap">
                 <img src={user?.avatar} alt="me" className="avatar" style={{ width: 36, height: 36, flexShrink: 0 }} />
                 <div style={{ flex: 1 }}>
@@ -506,57 +464,33 @@ export default function CreatePost({ onClose }) {
                 </div>
               </div>
 
-              {/* Location */}
               <div className="cp-share-row">
                 <MapPin size={18} style={{ color: 'var(--text-muted)' }} />
-                <input
-                  id="cp-location-input"
-                  type="text"
-                  className="cp-share-field"
-                  placeholder="Add location..."
-                  value={location}
-                  onChange={e => setLocation(e.target.value)}
-                />
+                <input id="cp-location-input" type="text" className="cp-share-field" placeholder="Add location..." value={location} onChange={e => setLocation(e.target.value)} />
                 <ChevronRight size={16} style={{ color: 'var(--text-muted)' }} />
               </div>
 
-              {/* Tag people */}
               <div className="cp-share-row">
                 <Tag size={18} style={{ color: 'var(--text-muted)' }} />
                 <span className="cp-share-field-label">Tag People</span>
                 <ChevronRight size={16} style={{ color: 'var(--text-muted)' }} />
               </div>
 
-              {/* Audience */}
               <div className="cp-share-section-label">Audience</div>
               <div className="cp-audience-selector">
                 {AUDIENCE_OPTIONS.map(o => (
-                  <button
-                    key={o.id}
-                    id={`cp-audience-${o.id}`}
-                    className={`cp-audience-btn ${audience === o.id ? 'active' : ''}`}
-                    onClick={() => setAudience(o.id)}
-                  >
+                  <button key={o.id} id={`cp-audience-${o.id}`} className={`cp-audience-btn ${audience === o.id ? 'active' : ''}`} onClick={() => setAudience(o.id)}>
                     <o.icon size={16} />
                     <span>{o.label}</span>
                   </button>
                 ))}
               </div>
 
-              {/* Alt text */}
               {mediaType === 'image' && (
                 <>
                   <div className="cp-share-section-label">Accessibility</div>
                   <div className="cp-share-row">
-                    <input
-                      id="cp-alt-text-input"
-                      type="text"
-                      className="cp-share-field"
-                      placeholder="Write alt text for this image..."
-                      value={altText}
-                      onChange={e => setAltText(e.target.value)}
-                      maxLength={250}
-                    />
+                    <input id="cp-alt-text-input" type="text" className="cp-share-field" placeholder="Write alt text for this image..." value={altText} onChange={e => setAltText(e.target.value)} maxLength={250} />
                   </div>
                 </>
               )}
@@ -575,12 +509,12 @@ export default function CreatePost({ onClose }) {
               id="cp-share-btn"
               className="btn btn-primary"
               onClick={handleShare}
-              disabled={loading || !previewUrl}
+              disabled={loading || !file}
             >
               {loading
                 ? <>
                     <span className="spinner" style={{ width: 16, height: 16, borderWidth: 2 }} />
-                    {mediaType === 'video' ? 'Uploading…' : 'Sharing…'}
+                    {uploadProgress || (mediaType === 'video' ? 'Uploading…' : 'Sharing…')}
                   </>
                 : mediaType === 'video' ? '🎬 Share Reel' : '🚀 Share Post'
               }
@@ -592,7 +526,6 @@ export default function CreatePost({ onClose }) {
   );
 }
 
-// Need to export Sparkles separately since it's used inside
 function Sparkles(props) {
   return (
     <svg xmlns="http://www.w3.org/2000/svg" width={props.size || 24} height={props.size || 24} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...props}>

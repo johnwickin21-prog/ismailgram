@@ -2,7 +2,7 @@ import { useState, useRef, useCallback } from 'react';
 import { Heart, MessageCircle, Send, Bookmark, MoreHorizontal, MapPin, SmilePlus } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import { useAuth } from '../../context/AuthContext';
-import { formatNumber } from '../../data/mockData';
+import { formatNumber } from '../../lib/utils';
 
 export default function PostCard({ post }) {
   const { toggleLike, toggleSave, addComment, showToast } = useApp();

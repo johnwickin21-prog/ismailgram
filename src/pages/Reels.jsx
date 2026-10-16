@@ -1,17 +1,14 @@
-import { useState, useRef } from 'react';
+import { useState } from 'react';
 import { Heart, MessageCircle, Send, Bookmark, Music, Volume2, VolumeX } from 'lucide-react';
-import { REELS, formatNumber } from '../data/mockData';
 import { useApp } from '../context/AppContext';
+import { formatNumber } from '../lib/utils';
 
 export default function Reels() {
-  const [reels, setReels] = useState(REELS);
+  const { posts, toggleLike, showToast } = useApp();
   const [muted, setMuted] = useState(true);
 
-  const toggleLike = (id) => {
-    setReels(prev => prev.map(r =>
-      r.id === id ? { ...r, liked: !r.liked, likes: r.liked ? r.likes - 1 : r.likes + 1 } : r
-    ));
-  };
+  // Only show video posts as reels
+  const reels = posts.filter(p => p.isVideo);
 
   return (
     <div className="reels-page">
@@ -34,17 +31,27 @@ export default function Reels() {
       </button>
 
       <div className="reels-container">
-        {reels.map((reel) => (
-          <ReelItem key={reel.id} reel={reel} muted={muted} onLike={() => toggleLike(reel.id)} />
-        ))}
+        {reels.length === 0 ? (
+          <div style={{
+            display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+            minHeight: '60vh', color: 'var(--text-muted)', textAlign: 'center',
+          }}>
+            <div style={{ fontSize: 64, marginBottom: 16 }}>🎬</div>
+            <div style={{ fontSize: 20, fontWeight: 700, color: 'var(--text-secondary)', marginBottom: 8 }}>No reels yet</div>
+            <div style={{ fontSize: 14 }}>Share a video to see it here as a reel!</div>
+          </div>
+        ) : (
+          reels.map((reel) => (
+            <ReelItem key={reel.id} reel={reel} muted={muted} onLike={() => toggleLike(reel.id)} />
+          ))
+        )}
       </div>
     </div>
   );
 }
 
 function ReelItem({ reel, muted, onLike }) {
-  const { showToast } = useApp();
-  const [saved, setSaved] = useState(false);
+  const { toggleSave, showToast } = useApp();
   const [isLikeAnimating, setIsLikeAnimating] = useState(false);
 
   const handleLike = () => {
@@ -54,16 +61,14 @@ function ReelItem({ reel, muted, onLike }) {
   };
 
   const handleSave = () => {
-    setSaved(s => !s);
-    showToast(saved ? 'Removed from saved' : 'Saved to collection ✨');
+    toggleSave(reel.id);
+    showToast(reel.saved ? 'Removed from saved' : 'Saved to collection ✨');
   };
 
   return (
     <div className="reel-item">
-      {/* Real looping video player for Reels */}
       <video
-        src={reel.video}
-        poster={reel.thumbnail}
+        src={reel.image}
         className="reel-video-bg"
         autoPlay
         loop
@@ -85,14 +90,13 @@ function ReelItem({ reel, muted, onLike }) {
         </div>
         <div className="reel-action">
           <MessageCircle size={28} />
-          <span className="reel-action-count">{formatNumber(reel.comments)}</span>
+          <span className="reel-action-count">{formatNumber(reel.comments?.length || 0)}</span>
         </div>
         <div className="reel-action" onClick={() => showToast('Link copied! 🔗')}>
           <Send size={26} />
-          <span className="reel-action-count">{formatNumber(reel.shares)}</span>
         </div>
-        <div className={`reel-action ${saved ? '' : ''}`} onClick={handleSave}>
-          <Bookmark size={26} fill={saved ? 'white' : 'none'} />
+        <div className="reel-action" onClick={handleSave}>
+          <Bookmark size={26} fill={reel.saved ? 'white' : 'none'} />
         </div>
         <div style={{ width: 44, height: 44, borderRadius: 8, overflow: 'hidden', border: '2px solid white', cursor: 'pointer' }}>
           <img src={reel.user.avatar} alt={reel.user.username} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
@@ -113,7 +117,7 @@ function ReelItem({ reel, muted, onLike }) {
         </div>
         <p className="reel-caption">{reel.caption}</p>
         <div className="reel-audio">
-          <Music size={12} /> {reel.audio}
+          <Music size={12} /> Original Audio
         </div>
       </div>
     </div>

@@ -1,7 +1,9 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Grid3X3, Bookmark, Video, Heart, MessageCircle, BadgeCheck, Link, Settings } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
-import { POSTS, EXPLORE_POSTS, formatNumber } from '../data/mockData';
+import { useApp } from '../context/AppContext';
+import { fetchUserPosts, fetchSavedPosts } from '../lib/db';
+import { formatNumber } from '../lib/utils';
 import EditProfile from '../components/Profile/EditProfile';
 
 const TABS = [
@@ -12,17 +14,53 @@ const TABS = [
 
 export default function Profile() {
   const { user } = useAuth();
+  const { posts } = useApp();
   const [activeTab, setActiveTab] = useState('posts');
   const [showEdit, setShowEdit] = useState(false);
+  const [myPosts, setMyPosts] = useState([]);
+  const [savedPosts, setSavedPosts] = useState([]);
+  const [tabLoading, setTabLoading] = useState(false);
 
-  const myPosts = POSTS.slice(0, 9).map(p => ({ ...p, user }));
-  const savedPosts = POSTS.filter(p => p.saved).map(p => ({ ...p }));
-  const reelPosts = EXPLORE_POSTS.filter(p => p.isReel).slice(0, 6);
+  // Load user's own posts
+  useEffect(() => {
+    if (!user?.id) return;
+    const load = async () => {
+      setTabLoading(true);
+      try {
+        const data = await fetchUserPosts(user.id);
+        setMyPosts(data);
+      } catch (err) {
+        console.error('fetchUserPosts error:', err);
+      } finally {
+        setTabLoading(false);
+      }
+    };
+    load();
+  }, [user?.id, posts]); // re-run when posts change (new post added)
+
+  // Load saved posts
+  useEffect(() => {
+    if (!user?.id || activeTab !== 'saved') return;
+    const load = async () => {
+      setTabLoading(true);
+      try {
+        const data = await fetchSavedPosts(user.id);
+        setSavedPosts(data);
+      } catch (err) {
+        console.error('fetchSavedPosts error:', err);
+      } finally {
+        setTabLoading(false);
+      }
+    };
+    load();
+  }, [user?.id, activeTab]);
+
+  const reelPosts = myPosts.filter(p => p.isVideo);
 
   const getTabContent = () => {
-    if (activeTab === 'posts') return myPosts;
-    if (activeTab === 'saved') return savedPosts;
+    if (activeTab === 'posts') return myPosts.filter(p => !p.isVideo);
     if (activeTab === 'reels') return reelPosts;
+    if (activeTab === 'saved') return savedPosts;
     return [];
   };
 
@@ -34,7 +72,12 @@ export default function Profile() {
       <div className="profile-header">
         <div className="profile-avatar-section">
           <div className="avatar-ring" style={{ width: 150, height: 150, padding: 4 }}>
-            <img src={user?.avatar} alt={user?.username} className="avatar" style={{ width: 138, height: 138, border: '3px solid var(--bg-primary)' }} />
+            <img
+              src={user?.avatar}
+              alt={user?.username}
+              className="avatar"
+              style={{ width: 138, height: 138, border: '3px solid var(--bg-primary)' }}
+            />
           </div>
         </div>
 
@@ -59,7 +102,7 @@ export default function Profile() {
 
           <div className="profile-stats">
             <div className="profile-stat">
-              <span className="stat-number">{formatNumber(user?.posts || 0)}</span>
+              <span className="stat-number">{formatNumber(myPosts.length)}</span>
               <span className="stat-label"> posts</span>
             </div>
             <div className="profile-stat" style={{ cursor: 'pointer' }}>
@@ -102,7 +145,11 @@ export default function Profile() {
 
       {/* Grid */}
       <div className="profile-grid" style={{ marginTop: 2 }}>
-        {tabContent.length === 0 ? (
+        {tabLoading ? (
+          <div style={{ gridColumn: '1/-1', textAlign: 'center', padding: '40px 0', color: 'var(--text-muted)' }}>
+            <div className="spinner" style={{ margin: '0 auto', width: 32, height: 32 }} />
+          </div>
+        ) : tabContent.length === 0 ? (
           <div className="profile-empty-tab">
             <div style={{ fontSize: 48 }}>
               {activeTab === 'saved' ? '🔖' : activeTab === 'reels' ? '🎬' : '📸'}
@@ -110,11 +157,14 @@ export default function Profile() {
             <div style={{ fontSize: 18, fontWeight: 700, color: 'var(--text-secondary)' }}>
               {activeTab === 'saved' ? 'No saved posts' : activeTab === 'reels' ? 'No reels yet' : 'Share your first photo'}
             </div>
+            <div style={{ fontSize: 13, color: 'var(--text-muted)', marginTop: 8 }}>
+              {activeTab === 'posts' ? 'Your posts will appear here after you share them.' : ''}
+            </div>
           </div>
         ) : (
           tabContent.map(item => (
             <div key={item.id} className="profile-grid-item">
-              <img src={item.image || item.thumbnail} alt="Post" loading="lazy" />
+              <img src={item.image} alt="Post" loading="lazy" />
               <div className="overlay">
                 <div className="overlay-stat">
                   <Heart size={16} fill="white" />
@@ -122,7 +172,7 @@ export default function Profile() {
                 </div>
                 <div className="overlay-stat">
                   <MessageCircle size={16} fill="white" />
-                  {formatNumber(item.comments?.length || item.comments || 0)}
+                  {formatNumber(item.comments?.length || 0)}
                 </div>
               </div>
             </div>

@@ -1,7 +1,10 @@
-import { useEffect, useState } from 'react';
+import { useEffect } from 'react';
 import { Heart, MessageCircle, UserPlus, AtSign, Bell } from 'lucide-react';
 import { useApp } from '../context/AppContext';
-import { formatNumber } from '../data/mockData';
+import { formatNumber } from '../lib/utils';
+import { useState } from 'react';
+import { toggleFollow as dbToggleFollow } from '../lib/db';
+import { useAuth } from '../context/AuthContext';
 
 const ICON_MAP = {
   like: Heart,
@@ -19,6 +22,7 @@ const COLOR_MAP = {
 
 export default function Notifications() {
   const { notifications, markNotificationsRead } = useApp();
+  const { user } = useAuth();
   const [followStates, setFollowStates] = useState({});
 
   useEffect(() => {
@@ -26,8 +30,23 @@ export default function Notifications() {
     return () => clearTimeout(timer);
   }, []);
 
-  const today = notifications.filter(n => n.unread || n.timestamp.includes('m ago') || n.timestamp.includes('h ago'));
-  const earlier = notifications.filter(n => n.timestamp.includes('d ago'));
+  const today = notifications.filter(n =>
+    n.unread || n.timestamp.includes('m ago') || n.timestamp.includes('h ago') || n.timestamp === 'Just now'
+  );
+  const earlier = notifications.filter(n =>
+    !n.unread && (n.timestamp.includes('d ago') || n.timestamp.includes('/'))
+  );
+
+  const handleFollow = async (userId) => {
+    if (!user?.id) return;
+    const current = followStates[userId] || false;
+    setFollowStates(prev => ({ ...prev, [userId]: !current }));
+    try {
+      await dbToggleFollow(user.id, userId);
+    } catch (err) {
+      setFollowStates(prev => ({ ...prev, [userId]: current }));
+    }
+  };
 
   return (
     <div className="notifications-page">
@@ -41,7 +60,7 @@ export default function Notifications() {
               key={n.id}
               notification={n}
               followState={followStates[n.user.id]}
-              onFollow={() => setFollowStates(prev => ({ ...prev, [n.user.id]: !prev[n.user.id] }))}
+              onFollow={() => handleFollow(n.user.id)}
             />
           ))}
         </div>
@@ -55,7 +74,7 @@ export default function Notifications() {
               key={n.id}
               notification={n}
               followState={followStates[n.user.id]}
-              onFollow={() => setFollowStates(prev => ({ ...prev, [n.user.id]: !prev[n.user.id] }))}
+              onFollow={() => handleFollow(n.user.id)}
             />
           ))}
         </div>

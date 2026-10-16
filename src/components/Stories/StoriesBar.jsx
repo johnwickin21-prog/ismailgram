@@ -1,12 +1,16 @@
 import { useState, useEffect, useRef } from 'react';
+import { X } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import { useAuth } from '../../context/AuthContext';
+import { supabase } from '../../lib/supabaseClient';
+import { createStory } from '../../lib/db';
 
 export default function StoriesBar({ stories }) {
   const { user } = useAuth();
   const [viewingIdx, setViewingIdx] = useState(null);
   const { markStorySeen, addStory, showToast } = useApp();
   const storyFileInputRef = useRef(null);
+  const [uploading, setUploading] = useState(false);
 
   const openStory = (idx) => {
     setViewingIdx(idx);
@@ -32,46 +36,62 @@ export default function StoriesBar({ stories }) {
     storyFileInputRef.current?.click();
   };
 
-  const handleStoryFileChange = (e) => {
+  const handleStoryFileChange = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
+    e.target.value = ''; // reset so same file can be re-selected
 
     if (!file.type.startsWith('image/')) {
       showToast('Please select an image file.');
       return;
     }
 
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      const newStory = {
-        id: 'story_' + Date.now(),
-        user: {
-          id: user.id,
-          username: user.username,
-          avatar: user.avatar,
-        },
-        image: event.target.result,
-        seen: false,
-        timestamp: 'Just now'
-      };
-      addStory(newStory);
+    if (!user) return;
+    setUploading(true);
+    try {
+      // Upload to Supabase Storage
+      const ext = file.name?.split('.').pop() || 'jpg';
+      const path = `${user.id}/${Date.now()}_${Math.random().toString(36).slice(2)}.${ext}`;
+      const { data, error } = await supabase.storage.from('stories').upload(path, file, {
+        cacheControl: '3600',
+        upsert: false,
+        contentType: file.type,
+      });
+      if (error) throw error;
+      const { data: urlData } = supabase.storage.from('stories').getPublicUrl(data.path);
+      const imageUrl = urlData.publicUrl;
+
+      // Save to stories table
+      await createStory(user.id, imageUrl);
+
+      // Reload stories
+      await addStory({});
       showToast('Story shared! ✨');
-    };
-    reader.readAsDataURL(file);
+    } catch (err) {
+      console.error('Story upload error:', err);
+      showToast('Failed to upload story. Please try again.');
+    } finally {
+      setUploading(false);
+    }
   };
 
   return (
     <>
       <div className="stories-bar">
         {/* Own story / add */}
-        <div className="story-item own-story" onClick={handleAddStoryClick}>
+        <div className={`story-item own-story ${uploading ? 'uploading' : ''}`} onClick={uploading ? undefined : handleAddStoryClick}>
           <div className="story-avatar-wrap">
             <div className="avatar-ring" style={{ background: 'var(--border-light)' }}>
-              <img src={user?.avatar || "https://i.pravatar.cc/150?img=11"} alt="Add story" className="avatar" style={{ width: 57, height: 57 }} />
+              {uploading
+                ? <div className="avatar" style={{ width: 57, height: 57, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    <span className="spinner" style={{ width: 24, height: 24, borderWidth: 2 }} />
+                  </div>
+                : <img src={user?.avatar || 'https://i.pravatar.cc/150?img=11'} alt="Add story" className="avatar" style={{ width: 57, height: 57 }} />
+              }
             </div>
-            <span className="story-add-btn">+</span>
+            {!uploading && <span className="story-add-btn">+</span>}
           </div>
-          <span className="story-label">Your Story</span>
+          <span className="story-label">{uploading ? 'Uploading...' : 'Your Story'}</span>
           <input
             type="file"
             ref={storyFileInputRef}
@@ -110,7 +130,7 @@ export default function StoriesBar({ stories }) {
 function StoryViewer({ stories, currentIdx, onClose, onNext, onPrev, onNavigate }) {
   const [progress, setProgress] = useState(0);
   const intervalRef = useRef(null);
-  const DURATION = 5000; // 5 seconds per story
+  const DURATION = 5000;
   const INTERVAL = 100;
 
   const story = stories[currentIdx];

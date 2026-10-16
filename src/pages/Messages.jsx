@@ -1,46 +1,51 @@
-import { useState } from 'react';
-import { Search, Send, Phone, Video, Info, ArrowLeft } from 'lucide-react';
+import { useState, useEffect, useRef } from 'react';
+import { Search, Send, Phone, Video, Info, ArrowLeft, CheckCheck, Check } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { useAuth } from '../context/AuthContext';
 import AudioCall from '../components/Call/AudioCall';
 import VideoCall from '../components/Call/VideoCall';
 
 export default function Messages() {
-  const { conversations, sendMessage } = useApp();
+  const { conversations, sendMessage, loadConvMessages } = useApp();
   const { user } = useAuth();
   const [activeConv, setActiveConv] = useState(null);
   const [messageText, setMessageText] = useState('');
   const [search, setSearch] = useState('');
   const [chatOpen, setChatOpen] = useState(false);
-
-  // Call states
-  const [audioCall, setAudioCall] = useState(null);  // contact object or null
-  const [videoCall, setVideoCall] = useState(null);  // contact object or null
+  const [audioCall, setAudioCall] = useState(null);
+  const [videoCall, setVideoCall] = useState(null);
+  const messagesEndRef = useRef(null);
 
   const filtered = conversations.filter(c =>
     c.user.username.toLowerCase().includes(search.toLowerCase()) ||
-    c.user.name.toLowerCase().includes(search.toLowerCase())
+    c.user.name?.toLowerCase().includes(search.toLowerCase())
   );
 
-  const openChat = (conv) => {
+  // Get active conv from context (to keep messages in sync)
+  const activeConvData = activeConv
+    ? conversations.find(c => c.id === activeConv.id) || activeConv
+    : null;
+
+  const openChat = async (conv) => {
     setActiveConv(conv);
     setChatOpen(true);
+    // Load messages and mark as seen
+    await loadConvMessages(conv.id);
   };
 
-  const handleSend = (e) => {
+  // Auto-scroll to bottom on new messages
+  useEffect(() => {
+    if (messagesEndRef.current) {
+      messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, [activeConvData?.messages?.length]);
+
+  const handleSend = async (e) => {
     e.preventDefault();
     if (!messageText.trim() || !activeConv) return;
-    sendMessage(activeConv.id, user, messageText.trim());
+    const text = messageText.trim();
     setMessageText('');
-    setActiveConv(prev => ({
-      ...prev,
-      messages: [...prev.messages, {
-        id: 'm_' + Date.now(),
-        from: user.id,
-        text: messageText.trim(),
-        time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-      }],
-    }));
+    await sendMessage(activeConv.id, user, text);
   };
 
   return (
@@ -62,34 +67,41 @@ export default function Messages() {
           </div>
 
           <div className="conversations-list">
-            {filtered.map(conv => (
-              <div
-                key={conv.id}
-                className={`conversation-item ${activeConv?.id === conv.id ? 'active' : ''}`}
-                onClick={() => openChat(conv)}
-              >
-                <div style={{ position: 'relative' }}>
-                  <img src={conv.user.avatar} alt={conv.user.username} className="avatar" style={{ width: 52, height: 52 }} />
-                  {conv.online && <div className="online-dot" />}
-                </div>
-                <div className="conversation-info">
-                  <div className="conversation-name">
-                    {conv.user.username}
-                    <span className="conversation-time">{conv.timestamp}</span>
-                  </div>
-                  <div className={`conversation-preview ${conv.unread ? 'unread' : ''}`}>
-                    {conv.lastMessage}
-                  </div>
-                </div>
-                {conv.unread && <div className="unread-dot" />}
+            {filtered.length === 0 ? (
+              <div style={{ textAlign: 'center', padding: '40px 20px', color: 'var(--text-muted)' }}>
+                <Send size={32} style={{ margin: '0 auto 12px', display: 'block', opacity: 0.3 }} />
+                <div style={{ fontSize: 14 }}>No conversations yet</div>
               </div>
-            ))}
+            ) : (
+              filtered.map(conv => (
+                <div
+                  key={conv.id}
+                  className={`conversation-item ${activeConv?.id === conv.id ? 'active' : ''}`}
+                  onClick={() => openChat(conv)}
+                >
+                  <div style={{ position: 'relative' }}>
+                    <img src={conv.user.avatar} alt={conv.user.username} className="avatar" style={{ width: 52, height: 52 }} />
+                    {conv.online && <div className="online-dot" />}
+                  </div>
+                  <div className="conversation-info">
+                    <div className="conversation-name">
+                      {conv.user.username}
+                      <span className="conversation-time">{conv.timestamp}</span>
+                    </div>
+                    <div className={`conversation-preview ${conv.unread ? 'unread' : ''}`}>
+                      {conv.lastMessage || 'Say hello! 👋'}
+                    </div>
+                  </div>
+                  {conv.unread && <div className="unread-dot" />}
+                </div>
+              ))
+            )}
           </div>
         </div>
 
         {/* Chat area */}
         <div className="chat-area">
-          {!activeConv ? (
+          {!activeConvData ? (
             <div className="chat-empty">
               <div className="chat-empty-icon">
                 <Send size={28} style={{ color: 'var(--text-muted)' }} />
@@ -111,19 +123,19 @@ export default function Messages() {
                   <ArrowLeft size={20} />
                 </button>
                 <div style={{ position: 'relative' }}>
-                  <img src={activeConv.user.avatar} alt={activeConv.user.username} className="avatar" style={{ width: 40, height: 40 }} />
-                  {activeConv.online && <div className="online-dot" />}
+                  <img src={activeConvData.user.avatar} alt={activeConvData.user.username} className="avatar" style={{ width: 40, height: 40 }} />
+                  {activeConvData.online && <div className="online-dot" />}
                 </div>
                 <div className="chat-header-info">
-                  <div className="name">{activeConv.user.username}</div>
-                  <div className="status">{activeConv.online ? '🟢 Active now' : 'Offline'}</div>
+                  <div className="name">{activeConvData.user.username}</div>
+                  <div className="status">{activeConvData.online ? '🟢 Active now' : 'Offline'}</div>
                 </div>
                 <div style={{ display: 'flex', gap: 8 }}>
                   <button
                     id="chat-audio-call-btn"
                     className="btn btn-ghost"
                     aria-label="Audio call"
-                    onClick={() => setAudioCall(activeConv.user)}
+                    onClick={() => setAudioCall(activeConvData.user)}
                     title="Audio Call"
                   >
                     <Phone size={20} />
@@ -132,7 +144,7 @@ export default function Messages() {
                     id="chat-video-call-btn"
                     className="btn btn-ghost"
                     aria-label="Video call"
-                    onClick={() => setVideoCall(activeConv.user)}
+                    onClick={() => setVideoCall(activeConvData.user)}
                     title="Video Call"
                   >
                     <Video size={20} />
@@ -143,20 +155,34 @@ export default function Messages() {
 
               <div className="chat-messages" id="chat-messages-container">
                 <div className="chat-date-divider">Today</div>
-                {activeConv.messages.map(msg => {
-                  const isOwn = msg.from === user?.id || msg.from === 'u1';
-                  return (
-                    <div key={msg.id} className={`message-bubble-wrap ${isOwn ? 'own' : ''}`}>
-                      {!isOwn && (
-                        <img src={activeConv.user.avatar} alt="avatar" className="avatar" style={{ width: 28, height: 28 }} />
-                      )}
-                      <div className={`message-bubble ${isOwn ? 'own' : 'other'}`}>
-                        {msg.text}
+                {(activeConvData.messages || []).length === 0 ? (
+                  <div style={{ textAlign: 'center', padding: '40px 20px', color: 'var(--text-muted)', fontSize: 14 }}>
+                    No messages yet. Say hello! 👋
+                  </div>
+                ) : (
+                  (activeConvData.messages || []).map(msg => {
+                    const isOwn = msg.from === user?.id;
+                    return (
+                      <div key={msg.id} className={`message-bubble-wrap ${isOwn ? 'own' : ''}`}>
+                        {!isOwn && (
+                          <img src={activeConvData.user.avatar} alt="avatar" className="avatar" style={{ width: 28, height: 28 }} />
+                        )}
+                        <div className={`message-bubble ${isOwn ? 'own' : 'other'}`}>
+                          {msg.text}
+                        </div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
+                          <span className="message-time">{msg.time}</span>
+                          {isOwn && (
+                            msg.seen
+                              ? <CheckCheck size={12} style={{ color: 'var(--accent-3)' }} title="Seen" />
+                              : <Check size={12} style={{ color: 'var(--text-muted)' }} title="Sent" />
+                          )}
+                        </div>
                       </div>
-                      <span className="message-time">{msg.time}</span>
-                    </div>
-                  );
-                })}
+                    );
+                  })
+                )}
+                <div ref={messagesEndRef} />
               </div>
 
               <form className="chat-input-area" onSubmit={handleSend}>
@@ -164,7 +190,7 @@ export default function Messages() {
                   <input
                     id="chat-message-input"
                     className="chat-input"
-                    placeholder={`Message ${activeConv.user.username}...`}
+                    placeholder={`Message ${activeConvData.user.username}...`}
                     value={messageText}
                     onChange={e => setMessageText(e.target.value)}
                     autoComplete="off"
@@ -184,20 +210,11 @@ export default function Messages() {
         </div>
       </div>
 
-      {/* Audio Call Modal */}
       {audioCall && (
-        <AudioCall
-          contact={audioCall}
-          onClose={() => setAudioCall(null)}
-        />
+        <AudioCall contact={audioCall} onClose={() => setAudioCall(null)} />
       )}
-
-      {/* Video Call Modal */}
       {videoCall && (
-        <VideoCall
-          contact={videoCall}
-          onClose={() => setVideoCall(null)}
-        />
+        <VideoCall contact={videoCall} onClose={() => setVideoCall(null)} />
       )}
     </>
   );
