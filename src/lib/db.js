@@ -1,19 +1,19 @@
 // ============================================================
 // db.js — Supabase Data Access Layer for IsmailGram
 // All database operations go through this file.
+// Uses supabase-js v2 correct API (no supabase.raw())
 // ============================================================
 
 import { supabase } from './supabaseClient';
 
 // ─── STORAGE helpers ─────────────────────────────────────────
-const BUCKETS = { posts: 'posts', stories: 'stories', avatars: 'avatars' };
-
 export async function uploadFile(bucket, file, folder = '') {
-  const ext = file.name.split('.').pop() || 'jpg';
+  const ext = file.name?.split('.').pop() || (file.type?.split('/')[1]) || 'jpg';
   const path = `${folder}${Date.now()}_${Math.random().toString(36).slice(2)}.${ext}`;
   const { data, error } = await supabase.storage.from(bucket).upload(path, file, {
     cacheControl: '3600',
     upsert: false,
+    contentType: file.type,
   });
   if (error) throw error;
   const { data: urlData } = supabase.storage.from(bucket).getPublicUrl(data.path);
@@ -21,7 +21,6 @@ export async function uploadFile(bucket, file, folder = '') {
 }
 
 export async function uploadBase64(bucket, base64, folder = '') {
-  // Convert base64 dataURL to blob
   const res = await fetch(base64);
   const blob = await res.blob();
   const ext = blob.type.split('/')[1] || 'jpg';
@@ -42,8 +41,8 @@ export async function fetchProfile(userId) {
     .from('profiles')
     .select('*')
     .eq('id', userId)
-    .single();
-  if (error && error.code !== 'PGRST116') throw error;
+    .maybeSingle();                          // maybeSingle: returns null instead of error if not found
+  if (error) throw error;
   return data || null;
 }
 
@@ -92,28 +91,24 @@ export async function toggleFollow(followerId, followingId) {
     .select('id')
     .eq('follower_id', followerId)
     .eq('following_id', followingId)
-    .single();
+    .maybeSingle();
 
   if (existing) {
     await supabase.from('follows').delete().eq('id', existing.id);
-    // Decrement counters
-    await supabase.rpc('decrement_followers', { uid: followingId }).catch(() => {});
-    await supabase.rpc('decrement_following', { uid: followerId }).catch(() => {});
-    return false; // unfollowed
+    // Decrement counters (read-then-write, no raw SQL needed)
+    const { data: fp } = await supabase.from('profiles').select('followers').eq('id', followingId).single();
+    if (fp) await supabase.from('profiles').update({ followers: Math.max(0, (fp.followers || 1) - 1) }).eq('id', followingId);
+    const { data: rp } = await supabase.from('profiles').select('following').eq('id', followerId).single();
+    if (rp) await supabase.from('profiles').update({ following: Math.max(0, (rp.following || 1) - 1) }).eq('id', followerId);
+    return false;
   } else {
     await supabase.from('follows').insert({ follower_id: followerId, following_id: followingId });
-    // Increment counters (best-effort)
-    await supabase
-      .from('profiles')
-      .update({ followers: supabase.raw('followers + 1') })
-      .eq('id', followingId)
-      .catch(() => {});
-    await supabase
-      .from('profiles')
-      .update({ following: supabase.raw('following + 1') })
-      .eq('id', followerId)
-      .catch(() => {});
-    return true; // followed
+    // Increment counters
+    const { data: fp } = await supabase.from('profiles').select('followers').eq('id', followingId).single();
+    if (fp) await supabase.from('profiles').update({ followers: (fp.followers || 0) + 1 }).eq('id', followingId);
+    const { data: rp } = await supabase.from('profiles').select('following').eq('id', followerId).single();
+    if (rp) await supabase.from('profiles').update({ following: (rp.following || 0) + 1 }).eq('id', followerId);
+    return true;
   }
 }
 
@@ -121,10 +116,7 @@ export async function toggleFollow(followerId, followingId) {
 export async function fetchPosts(currentUserId) {
   const { data: postsData, error } = await supabase
     .from('posts')
-    .select(`
-      *,
-      profiles!posts_user_id_fkey(id, username, name, avatar_url, verified)
-    `)
+    .select('*, profiles!posts_user_id_fkey(id, username, name, avatar_url, verified)')
     .order('created_at', { ascending: false })
     .limit(50);
 
@@ -135,24 +127,18 @@ export async function fetchPosts(currentUserId) {
 
   // Fetch likes by current user
   const { data: userLikes } = await supabase
-    .from('likes')
-    .select('post_id')
-    .eq('user_id', currentUserId)
-    .in('post_id', postIds);
+    .from('likes').select('post_id').eq('user_id', currentUserId).in('post_id', postIds);
   const likedSet = new Set((userLikes || []).map(l => l.post_id));
 
   // Fetch saves by current user
   const { data: userSaves } = await supabase
-    .from('saves')
-    .select('post_id')
-    .eq('user_id', currentUserId)
-    .in('post_id', postIds);
+    .from('saves').select('post_id').eq('user_id', currentUserId).in('post_id', postIds);
   const savedSet = new Set((userSaves || []).map(s => s.post_id));
 
   // Fetch comments
   const { data: commentsData } = await supabase
     .from('comments')
-    .select(`*, profiles!comments_user_id_fkey(id, username, avatar_url)`)
+    .select('*, profiles!comments_user_id_fkey(id, username, avatar_url)')
     .in('post_id', postIds)
     .order('created_at', { ascending: true });
 
@@ -161,11 +147,7 @@ export async function fetchPosts(currentUserId) {
     if (!commentsByPost[c.post_id]) commentsByPost[c.post_id] = [];
     commentsByPost[c.post_id].push({
       id: c.id,
-      user: {
-        id: c.profiles.id,
-        username: c.profiles.username,
-        avatar: c.profiles.avatar_url,
-      },
+      user: { id: c.profiles.id, username: c.profiles.username, avatar: c.profiles.avatar_url },
       text: c.text,
       timestamp: timeAgoSimple(c.created_at),
     });
@@ -207,29 +189,26 @@ export async function createPost(userId, imageUrl, caption, location, isVideo, a
     .select()
     .single();
   if (error) throw error;
-  // Increment user post count
-  await supabase
-    .from('profiles')
-    .update({ posts_count: supabase.raw('posts_count + 1') })
-    .eq('id', userId)
-    .catch(() => {});
+  // Increment user post count (read-then-write)
+  const { data: prof } = await supabase.from('profiles').select('posts_count').eq('id', userId).single();
+  if (prof) {
+    await supabase.from('profiles').update({ posts_count: (prof.posts_count || 0) + 1 }).eq('id', userId);
+  }
   return data;
 }
 
 export async function toggleLike(userId, postId, currentlyLiked) {
   if (currentlyLiked) {
     await supabase.from('likes').delete().eq('user_id', userId).eq('post_id', postId);
-    await supabase
-      .from('posts')
-      .update({ likes_count: supabase.raw('greatest(likes_count - 1, 0)') })
-      .eq('id', postId);
+    // Decrement likes_count
+    const { data: p } = await supabase.from('posts').select('likes_count').eq('id', postId).single();
+    if (p) await supabase.from('posts').update({ likes_count: Math.max(0, (p.likes_count || 1) - 1) }).eq('id', postId);
     return false;
   } else {
-    await supabase.from('likes').upsert({ user_id: userId, post_id: postId }, { onConflict: 'user_id,post_id' });
-    await supabase
-      .from('posts')
-      .update({ likes_count: supabase.raw('likes_count + 1') })
-      .eq('id', postId);
+    await supabase.from('likes').upsert({ user_id: userId, post_id: postId }, { onConflict: 'user_id,post_id', ignoreDuplicates: true });
+    // Increment likes_count
+    const { data: p } = await supabase.from('posts').select('likes_count').eq('id', postId).single();
+    if (p) await supabase.from('posts').update({ likes_count: (p.likes_count || 0) + 1 }).eq('id', postId);
     return true;
   }
 }
@@ -239,7 +218,7 @@ export async function toggleSave(userId, postId, currentlySaved) {
     await supabase.from('saves').delete().eq('user_id', userId).eq('post_id', postId);
     return false;
   } else {
-    await supabase.from('saves').upsert({ user_id: userId, post_id: postId }, { onConflict: 'user_id,post_id' });
+    await supabase.from('saves').upsert({ user_id: userId, post_id: postId }, { onConflict: 'user_id,post_id', ignoreDuplicates: true });
     return true;
   }
 }
@@ -248,16 +227,12 @@ export async function addComment(userId, postId, text) {
   const { data, error } = await supabase
     .from('comments')
     .insert({ user_id: userId, post_id: postId, text })
-    .select(`*, profiles!comments_user_id_fkey(id, username, avatar_url)`)
+    .select('*, profiles!comments_user_id_fkey(id, username, avatar_url)')
     .single();
   if (error) throw error;
   return {
     id: data.id,
-    user: {
-      id: data.profiles.id,
-      username: data.profiles.username,
-      avatar: data.profiles.avatar_url,
-    },
+    user: { id: data.profiles.id, username: data.profiles.username, avatar: data.profiles.avatar_url },
     text: data.text,
     timestamp: 'Just now',
   };
@@ -284,7 +259,7 @@ export async function fetchUserPosts(userId) {
 export async function fetchSavedPosts(userId) {
   const { data, error } = await supabase
     .from('saves')
-    .select(`post_id, posts(id, image_url, likes_count, is_video, caption, created_at)`)
+    .select('post_id, posts(id, image_url, likes_count, is_video, caption, created_at)')
     .eq('user_id', userId)
     .order('created_at', { ascending: false });
   if (error) throw error;
@@ -303,21 +278,16 @@ export async function fetchSavedPosts(userId) {
 
 // ─── STORIES ─────────────────────────────────────────────────
 export async function fetchStories(currentUserId) {
-  // Only show stories from last 24 hours
   const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
   const { data, error } = await supabase
     .from('stories')
-    .select(`*, profiles!stories_user_id_fkey(id, username, avatar_url)`)
+    .select('*, profiles!stories_user_id_fkey(id, username, avatar_url)')
     .gte('created_at', since)
     .order('created_at', { ascending: false });
   if (error) throw error;
   return (data || []).map(s => ({
     id: s.id,
-    user: {
-      id: s.profiles.id,
-      username: s.profiles.username,
-      avatar: s.profiles.avatar_url,
-    },
+    user: { id: s.profiles.id, username: s.profiles.username, avatar: s.profiles.avatar_url },
     image: s.image_url,
     seen: Array.isArray(s.seen_by) && s.seen_by.includes(currentUserId),
     timestamp: timeAgoSimple(s.created_at),
@@ -335,23 +305,15 @@ export async function createStory(userId, imageUrl) {
 }
 
 export async function markStorySeen(storyId, userId) {
-  // Append userId to seen_by array
-  const { data: story } = await supabase
-    .from('stories')
-    .select('seen_by')
-    .eq('id', storyId)
-    .single();
+  const { data: story } = await supabase.from('stories').select('seen_by').eq('id', storyId).maybeSingle();
   if (!story) return;
   const seenBy = story.seen_by || [];
   if (!seenBy.includes(userId)) {
-    await supabase
-      .from('stories')
-      .update({ seen_by: [...seenBy, userId] })
-      .eq('id', storyId);
+    await supabase.from('stories').update({ seen_by: [...seenBy, userId] }).eq('id', storyId);
   }
 }
 
-// ─── CONVERSATIONS & MESSAGES ────────────────────────────────
+// ─── CONVERSATIONS & MESSAGES ─────────────────────────────────
 export async function fetchConversations(userId) {
   const { data, error } = await supabase
     .from('conversations')
@@ -379,7 +341,7 @@ export async function fetchConversations(userId) {
     if (!lastMsgByConv[m.conv_id]) lastMsgByConv[m.conv_id] = m;
   });
 
-  // Fetch unread count per conversation for current user
+  // Fetch unread counts
   const { data: unreadData } = await supabase
     .from('messages')
     .select('conv_id')
@@ -402,7 +364,7 @@ export async function fetchConversations(userId) {
       lastMessage: lastMsg?.text || '',
       timestamp: lastMsg ? timeAgoSimple(lastMsg.created_at) : '',
       unread: unreadConvIds.has(c.id),
-      online: false, // realtime presence could be added later
+      online: false,
       messages: [],
     };
   });
@@ -450,18 +412,14 @@ export async function markMessagesSeen(convId, currentUserId) {
 }
 
 export async function getOrCreateConversation(userId1, userId2) {
-  // Try to find existing conversation
+  // Try existing
   const { data: existing } = await supabase
     .from('conversations')
     .select('id')
-    .or(
-      `and(user1_id.eq.${userId1},user2_id.eq.${userId2}),and(user1_id.eq.${userId2},user2_id.eq.${userId1})`
-    )
-    .single();
-
+    .or(`and(user1_id.eq.${userId1},user2_id.eq.${userId2}),and(user1_id.eq.${userId2},user2_id.eq.${userId1})`)
+    .maybeSingle();
   if (existing) return existing.id;
 
-  // Create new
   const { data, error } = await supabase
     .from('conversations')
     .insert({ user1_id: userId1, user2_id: userId2 })
@@ -471,15 +429,11 @@ export async function getOrCreateConversation(userId1, userId2) {
   return data.id;
 }
 
-// ─── NOTIFICATIONS ───────────────────────────────────────────
+// ─── NOTIFICATIONS ────────────────────────────────────────────
 export async function fetchNotifications(userId) {
   const { data, error } = await supabase
     .from('notifications')
-    .select(`
-      *,
-      actor:profiles!notifications_actor_id_fkey(id, username, avatar_url),
-      post:posts(image_url)
-    `)
+    .select('*, actor:profiles!notifications_actor_id_fkey(id, username, avatar_url), post:posts(image_url)')
     .eq('user_id', userId)
     .order('created_at', { ascending: false })
     .limit(30);
@@ -487,11 +441,7 @@ export async function fetchNotifications(userId) {
   return (data || []).map(n => ({
     id: n.id,
     type: n.type,
-    user: {
-      id: n.actor.id,
-      username: n.actor.username,
-      avatar: n.actor.avatar_url,
-    },
+    user: { id: n.actor.id, username: n.actor.username, avatar: n.actor.avatar_url },
     text: n.type === 'like' ? 'liked your photo.'
         : n.type === 'comment' ? 'commented on your post.'
         : n.type === 'follow' ? 'started following you.'
@@ -511,7 +461,7 @@ export async function markNotificationsRead(userId) {
 }
 
 export async function createNotification(recipientId, actorId, type, postId = null) {
-  if (recipientId === actorId) return; // Don't notify self
+  if (recipientId === actorId) return;
   await supabase.from('notifications').insert({
     user_id: recipientId,
     actor_id: actorId,
