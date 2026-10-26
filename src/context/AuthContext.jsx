@@ -84,7 +84,7 @@ export function AuthProvider({ children }) {
         .from('profiles')
         .select('*')
         .eq('username', username.toLowerCase().trim())
-        .single();
+        .maybeSingle();
 
       if (error || !data) {
         return { success: false, error: 'No account found with that username.' };
@@ -136,27 +136,28 @@ export function AuthProvider({ children }) {
         .from('profiles')
         .select('id')
         .eq('username', username.toLowerCase().trim())
-        .single();
+        .maybeSingle();
 
       if (existing) {
         return { success: false, error: 'Username already taken. Choose another.' };
       }
 
-      const newId = 'u_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7);
-      const profileRow = {
-        id: newId,
-        username: username.toLowerCase().trim(),
-        name: name.trim(),
-        bio: '',
-        avatar_url: `https://i.pravatar.cc/150?img=${Math.floor(Math.random() * 70) + 1}`,
-        website: '',
-        followers: 0,
-        following: 0,
-        posts_count: 0,
-        verified: false,
-        is_private: false,
-      };
+      const newId = crypto.randomUUID();
+    
 
+const profileRow = {
+  id: newId,
+  username: username.toLowerCase().trim(),
+  name: name.trim(),
+  bio: '',
+  avatar_url: `https://i.pravatar.cc/150?img=${Math.floor(Math.random() * 70) + 1}`,
+  website: '',
+  followers: 0,
+  following: 0,
+  posts_count: 0,
+  verified: false,
+  is_private: false,
+};
       await upsertProfile(profileRow);
       // Store password locally (simple — no Supabase Auth)
       localStorage.setItem(`ismailgram_pw_${newId}`, password);

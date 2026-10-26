@@ -26,9 +26,9 @@ export default function Login() {
 
     let result;
     if (mode === 'login') {
-      result = login(form.username, form.password);
+      result = await login(form.username, form.password);
     } else {
-      result = signup(form.name, form.username, form.password);
+      result = await signup(form.name, form.username, form.password);
     }
 
     if (result.success) {

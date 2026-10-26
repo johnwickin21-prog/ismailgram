@@ -91,3 +91,7 @@ vite.config.ts.timestamp-*
 .output/
 dist/
 .temp/
+
+# Local Supabase setup files
+setup-db.js
+src/lib/supabase.txt
