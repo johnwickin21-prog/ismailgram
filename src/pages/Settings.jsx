@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import {
   User, Lock, Bell, Eye, Shield, Palette, Globe,
   HelpCircle, Info, Trash2, LogOut, ChevronRight,
@@ -10,6 +10,41 @@ import {
 import { useAuth } from '../context/AuthContext';
 import { useNavigate } from 'react-router-dom';
 
+/* ─── Helpers ──────────────────────────────────────────────── */
+const SETTINGS_KEY = 'ismailgram_settings';
+
+function loadSettings() {
+  try {
+    const saved = localStorage.getItem(SETTINGS_KEY);
+    return saved ? JSON.parse(saved) : {};
+  } catch {
+    return {};
+  }
+}
+
+function saveSettings(patch) {
+  try {
+    const current = loadSettings();
+    localStorage.setItem(SETTINGS_KEY, JSON.stringify({ ...current, ...patch }));
+  } catch { /* ignore */ }
+}
+
+function applyTheme(theme) {
+  const html = document.documentElement;
+  html.classList.remove('dark', 'light');
+  if (theme === 'dark') {
+    html.classList.add('dark');
+  } else if (theme === 'light') {
+    html.classList.add('light');
+  } else {
+    // auto — follow system
+    const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+    if (prefersDark) html.classList.add('dark');
+    else html.classList.add('light');
+  }
+}
+
+/* ─── Sub-components ────────────────────────────────────────── */
 const Toggle = ({ checked, onChange, id }) => (
   <button
     id={id}
@@ -48,44 +83,105 @@ const SectionHeader = ({ title }) => (
 
 const Divider = () => <div className="settings-divider" />;
 
+/* ─── Main Component ─────────────────────────────────────────── */
 export default function Settings() {
   const { user, logout, updateUser } = useAuth();
   const navigate = useNavigate();
 
+  // Load all settings from localStorage on mount
+  const saved = loadSettings();
+
   // Privacy
-  const [privateAccount, setPrivateAccount] = useState(false);
-  const [activityStatus, setActivityStatus] = useState(true);
-  const [storyReplies, setStoryReplies] = useState(true);
-  const [allowTags, setAllowTags] = useState(true);
+  const [privateAccount, setPrivateAccountState] = useState(saved.privateAccount ?? user?.isPrivate ?? false);
+  const [activityStatus, setActivityStatusState] = useState(saved.activityStatus ?? true);
+  const [storyReplies, setStoryRepliesState] = useState(saved.storyReplies ?? true);
+  const [allowTags, setAllowTagsState] = useState(saved.allowTags ?? true);
 
   // Notifications
-  const [notifLikes, setNotifLikes] = useState(true);
-  const [notifComments, setNotifComments] = useState(true);
-  const [notifFollows, setNotifFollows] = useState(true);
-  const [notifMessages, setNotifMessages] = useState(true);
-  const [notifLiveVideos, setNotifLiveVideos] = useState(false);
-  const [notifEmail, setNotifEmail] = useState(false);
-  const [notifSMS, setNotifSMS] = useState(false);
-  const [notifPush, setNotifPush] = useState(true);
+  const [notifLikes, setNotifLikesState] = useState(saved.notifLikes ?? true);
+  const [notifComments, setNotifCommentsState] = useState(saved.notifComments ?? true);
+  const [notifFollows, setNotifFollowsState] = useState(saved.notifFollows ?? true);
+  const [notifMessages, setNotifMessagesState] = useState(saved.notifMessages ?? true);
+  const [notifLiveVideos, setNotifLiveVideosState] = useState(saved.notifLiveVideos ?? false);
+  const [notifEmail, setNotifEmailState] = useState(saved.notifEmail ?? false);
+  const [notifSMS, setNotifSMSState] = useState(saved.notifSMS ?? false);
+  const [notifPush, setNotifPushState] = useState(saved.notifPush ?? true);
 
   // Security
-  const [twoFactor, setTwoFactor] = useState(false);
-  const [savedLogin, setSavedLogin] = useState(true);
+  const [twoFactor, setTwoFactorState] = useState(saved.twoFactor ?? false);
+  const [savedLogin, setSavedLoginState] = useState(saved.savedLogin ?? true);
 
   // Appearance
-  const [theme, setTheme] = useState('light');
-  const [fontSize, setFontSize] = useState('medium');
+  const [theme, setThemeState] = useState(saved.theme ?? 'light');
+  const [fontSize, setFontSizeState] = useState(saved.fontSize ?? 'medium');
 
   // Content
-  const [sensitiveContent, setSensitiveContent] = useState(false);
-  const [language, setLanguage] = useState('English');
-  const [autoPlay, setAutoPlay] = useState(true);
-  const [highQuality, setHighQuality] = useState(true);
+  const [sensitiveContent, setSensitiveContentState] = useState(saved.sensitiveContent ?? false);
+  const [language, setLanguageState] = useState(saved.language ?? 'English');
+  const [autoPlay, setAutoPlayState] = useState(saved.autoPlay ?? true);
+  const [highQuality, setHighQualityState] = useState(saved.highQuality ?? true);
 
   // UI state
   const [activeSection, setActiveSection] = useState('home');
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [showDeactivateConfirm, setShowDeactivateConfirm] = useState(false);
+  const [toast, setToast] = useState('');
+
+  // Apply theme and font size on mount
+  useEffect(() => {
+    applyTheme(theme);
+    applyFontSize(fontSize);
+  }, []);
+
+  /* ── Persisting toggle factories ── */
+  const makeSetter = (key, stateSetter, extra) => (val) => {
+    stateSetter(val);
+    saveSettings({ [key]: val });
+    if (extra) extra(val);
+  };
+
+  const setPrivateAccount = makeSetter('privateAccount', setPrivateAccountState, async (val) => {
+    try { await updateUser({ isPrivate: val }); } catch { /* silent */ }
+  });
+  const setActivityStatus  = makeSetter('activityStatus', setActivityStatusState);
+  const setStoryReplies    = makeSetter('storyReplies', setStoryRepliesState);
+  const setAllowTags       = makeSetter('allowTags', setAllowTagsState);
+  const setNotifLikes      = makeSetter('notifLikes', setNotifLikesState);
+  const setNotifComments   = makeSetter('notifComments', setNotifCommentsState);
+  const setNotifFollows    = makeSetter('notifFollows', setNotifFollowsState);
+  const setNotifMessages   = makeSetter('notifMessages', setNotifMessagesState);
+  const setNotifLiveVideos = makeSetter('notifLiveVideos', setNotifLiveVideosState);
+  const setNotifEmail      = makeSetter('notifEmail', setNotifEmailState);
+  const setNotifSMS        = makeSetter('notifSMS', setNotifSMSState);
+  const setNotifPush       = makeSetter('notifPush', setNotifPushState);
+  const setTwoFactor       = makeSetter('twoFactor', setTwoFactorState);
+  const setSavedLogin      = makeSetter('savedLogin', setSavedLoginState);
+  const setSensitiveContent= makeSetter('sensitiveContent', setSensitiveContentState);
+  const setAutoPlay        = makeSetter('autoPlay', setAutoPlayState);
+  const setHighQuality     = makeSetter('highQuality', setHighQualityState);
+
+  const setTheme = (val) => {
+    setThemeState(val);
+    saveSettings({ theme: val });
+    applyTheme(val);
+  };
+
+  function applyFontSize(size) {
+    const html = document.documentElement;
+    html.classList.remove('font-small', 'font-medium', 'font-large');
+    html.classList.add(`font-${size}`);
+  }
+
+  const setFontSize = (val) => {
+    setFontSizeState(val);
+    saveSettings({ fontSize: val });
+    applyFontSize(val);
+  };
+
+  const showToast = (msg) => {
+    setToast(msg);
+    setTimeout(() => setToast(''), 2500);
+  };
 
   const handleLogout = () => {
     logout();
@@ -93,50 +189,16 @@ export default function Settings() {
   };
 
   const sections = [
-    {
-      id: 'account',
-      icon: User,
-      label: 'Account',
-      desc: 'Edit profile, username, password',
-    },
-    {
-      id: 'privacy',
-      icon: Eye,
-      label: 'Privacy',
-      desc: 'Account privacy, story, tags',
-    },
-    {
-      id: 'notifications',
-      icon: Bell,
-      label: 'Notifications',
-      desc: 'Push, email, SMS notifications',
-    },
-    {
-      id: 'security',
-      icon: Shield,
-      label: 'Security',
-      desc: 'Two-factor auth, login activity',
-    },
-    {
-      id: 'appearance',
-      icon: Palette,
-      label: 'Appearance',
-      desc: 'Theme, font size, display',
-    },
-    {
-      id: 'content',
-      icon: Globe,
-      label: 'Content & Display',
-      desc: 'Language, accessibility, content',
-    },
-    {
-      id: 'about',
-      icon: Info,
-      label: 'About',
-      desc: 'Version, terms, privacy policy',
-    },
+    { id: 'account',       icon: User,    label: 'Account',          desc: 'Edit profile, username, password' },
+    { id: 'privacy',       icon: Eye,     label: 'Privacy',           desc: 'Account privacy, story, tags' },
+    { id: 'notifications', icon: Bell,    label: 'Notifications',     desc: 'Push, email, SMS notifications' },
+    { id: 'security',      icon: Shield,  label: 'Security',          desc: 'Two-factor auth, login activity' },
+    { id: 'appearance',    icon: Palette, label: 'Appearance',        desc: 'Theme, font size, display' },
+    { id: 'content',       icon: Globe,   label: 'Content & Display', desc: 'Language, accessibility, content' },
+    { id: 'about',         icon: Info,    label: 'About',             desc: 'Version, terms, privacy policy' },
   ];
 
+  /* ─── Render home ─── */
   const renderHome = () => (
     <div className="settings-home">
       {/* User card */}
@@ -145,10 +207,7 @@ export default function Settings() {
         <div>
           <div className="settings-user-name">{user?.username}</div>
           <div className="settings-user-sub">{user?.name}</div>
-          <button
-            className="settings-edit-link"
-            onClick={() => navigate('/profile')}
-          >
+          <button className="settings-edit-link" onClick={() => navigate('/profile')}>
             View profile
           </button>
         </div>
@@ -156,7 +215,6 @@ export default function Settings() {
 
       <Divider />
 
-      {/* Main sections */}
       <div className="settings-list">
         {sections.map(s => (
           <SettingRow
@@ -171,7 +229,6 @@ export default function Settings() {
 
       <Divider />
 
-      {/* Danger zone */}
       <div className="settings-list">
         <SettingRow
           icon={AlertTriangle}
@@ -200,31 +257,33 @@ export default function Settings() {
     </div>
   );
 
+  /* ─── Render account ─── */
   const renderAccount = () => (
     <div className="settings-section-body">
       <SectionHeader title="Personal Information" />
       <div className="settings-list">
         <SettingRow icon={User} label="Edit Profile" desc="Name, bio, website, profile photo" onClick={() => navigate('/profile')} />
-        <SettingRow icon={User} label="Username" desc={`@${user?.username}`} onClick={() => {}} />
-        <SettingRow icon={Mail} label="Email Address" desc="Manage linked email" onClick={() => {}} />
-        <SettingRow icon={Smartphone} label="Phone Number" desc="Add or change phone number" onClick={() => {}} />
+        <SettingRow icon={User} label="Username" desc={`@${user?.username}`} onClick={() => navigate('/profile')} />
+        <SettingRow icon={Mail} label="Email Address" desc="Manage linked email" onClick={() => showToast('Feature coming soon!')} />
+        <SettingRow icon={Smartphone} label="Phone Number" desc="Add or change phone number" onClick={() => showToast('Feature coming soon!')} />
       </div>
 
       <SectionHeader title="Account" />
       <div className="settings-list">
-        <SettingRow icon={Key} label="Change Password" desc="Update your password" onClick={() => {}} />
-        <SettingRow icon={Activity} label="Professional Account" desc="Switch to creator or business" onClick={() => {}} />
-        <SettingRow icon={Languages} label="Linked Accounts" desc="Facebook, Twitter, etc." onClick={() => {}} />
+        <SettingRow icon={Key} label="Change Password" desc="Update your password" onClick={() => showToast('Feature coming soon!')} />
+        <SettingRow icon={Activity} label="Professional Account" desc="Switch to creator or business" onClick={() => showToast('Feature coming soon!')} />
+        <SettingRow icon={Languages} label="Linked Accounts" desc="Facebook, Twitter, etc." onClick={() => showToast('Feature coming soon!')} />
       </div>
 
       <SectionHeader title="Data" />
       <div className="settings-list">
-        <SettingRow icon={BookOpen} label="Download Your Data" desc="Request a copy of your data" onClick={() => {}} />
-        <SettingRow icon={Activity} label="Account Activity" desc="View recent login history" onClick={() => {}} />
+        <SettingRow icon={BookOpen} label="Download Your Data" desc="Request a copy of your data" onClick={() => showToast('Feature coming soon!')} />
+        <SettingRow icon={Activity} label="Account Activity" desc="View recent login history" onClick={() => showToast('Feature coming soon!')} />
       </div>
     </div>
   );
 
+  /* ─── Render privacy ─── */
   const renderPrivacy = () => (
     <div className="settings-section-body">
       <SectionHeader title="Account Privacy" />
@@ -257,19 +316,20 @@ export default function Settings() {
           desc="Allow others to tag you"
           right={<Toggle id="toggle-tags" checked={allowTags} onChange={setAllowTags} />}
         />
-        <SettingRow icon={UserPlus} label="Restricted Accounts" desc="Manage restricted accounts" onClick={() => {}} />
-        <SettingRow icon={X} label="Blocked Accounts" desc="View and manage blocked users" onClick={() => {}} />
-        <SettingRow icon={Globe} label="Close Friends" desc="Manage your close friends list" onClick={() => {}} />
+        <SettingRow icon={UserPlus} label="Restricted Accounts" desc="Manage restricted accounts" onClick={() => showToast('Feature coming soon!')} />
+        <SettingRow icon={X} label="Blocked Accounts" desc="View and manage blocked users" onClick={() => showToast('Feature coming soon!')} />
+        <SettingRow icon={Globe} label="Close Friends" desc="Manage your close friends list" onClick={() => showToast('Feature coming soon!')} />
       </div>
 
       <SectionHeader title="Content" />
       <div className="settings-list">
-        <SettingRow icon={Heart} label="Liked Posts" desc="Posts you've liked" onClick={() => {}} />
-        <SettingRow icon={Eye} label="Hidden Words" desc="Filter offensive comments" onClick={() => {}} />
+        <SettingRow icon={Heart} label="Liked Posts" desc="Posts you've liked" onClick={() => showToast('Feature coming soon!')} />
+        <SettingRow icon={Eye} label="Hidden Words" desc="Filter offensive comments" onClick={() => showToast('Feature coming soon!')} />
       </div>
     </div>
   );
 
+  /* ─── Render notifications ─── */
   const renderNotifications = () => (
     <div className="settings-section-body">
       <SectionHeader title="Push Notifications" />
@@ -334,6 +394,7 @@ export default function Settings() {
     </div>
   );
 
+  /* ─── Render security ─── */
   const renderSecurity = () => (
     <div className="settings-section-body">
       <SectionHeader title="Login Security" />
@@ -348,13 +409,13 @@ export default function Settings() {
           icon={Key}
           label="Change Password"
           desc="Update your account password"
-          onClick={() => {}}
+          onClick={() => showToast('Feature coming soon!')}
         />
         <SettingRow
           icon={Activity}
           label="Login Activity"
           desc="View devices and locations"
-          onClick={() => {}}
+          onClick={() => showToast('Feature coming soon!')}
         />
         <SettingRow
           icon={BookOpen}
@@ -366,20 +427,21 @@ export default function Settings() {
 
       <SectionHeader title="Data & Permissions" />
       <div className="settings-list">
-        <SettingRow icon={Globe} label="Apps & Websites" desc="Manage third-party app access" onClick={() => {}} />
-        <SettingRow icon={Mail} label="Emails from IsmailGram" desc="View security emails sent to you" onClick={() => {}} />
+        <SettingRow icon={Globe} label="Apps & Websites" desc="Manage third-party app access" onClick={() => showToast('Feature coming soon!')} />
+        <SettingRow icon={Mail} label="Emails from IsmailGram" desc="View security emails sent to you" onClick={() => showToast('Feature coming soon!')} />
       </div>
     </div>
   );
 
+  /* ─── Render appearance ─── */
   const renderAppearance = () => (
     <div className="settings-section-body">
       <SectionHeader title="Theme" />
       <div className="settings-theme-selector">
         {[
-          { id: 'light', icon: Sun, label: 'Light' },
-          { id: 'dark', icon: Moon, label: 'Dark' },
-          { id: 'auto', icon: Monitor, label: 'Auto' },
+          { id: 'light', icon: Sun,     label: 'Light' },
+          { id: 'dark',  icon: Moon,    label: 'Dark'  },
+          { id: 'auto',  icon: Monitor, label: 'Auto'  },
         ].map(t => (
           <button
             key={t.id}
@@ -413,12 +475,13 @@ export default function Settings() {
 
       <SectionHeader title="Display" />
       <div className="settings-list">
-        <SettingRow icon={Monitor} label="Grid View" desc="Choose default feed layout" onClick={() => {}} />
-        <SettingRow icon={Accessibility} label="Accessibility" desc="Text, contrast, motion" onClick={() => {}} />
+        <SettingRow icon={Monitor} label="Grid View" desc="Choose default feed layout" onClick={() => showToast('Feature coming soon!')} />
+        <SettingRow icon={Accessibility} label="Accessibility" desc="Text, contrast, motion" onClick={() => showToast('Feature coming soon!')} />
       </div>
     </div>
   );
 
+  /* ─── Render content ─── */
   const renderContent = () => (
     <div className="settings-section-body">
       <SectionHeader title="Content Preferences" />
@@ -445,52 +508,53 @@ export default function Settings() {
 
       <SectionHeader title="Language & Region" />
       <div className="settings-list">
-        <SettingRow icon={Languages} label="Language" desc={language} onClick={() => {}} />
-        <SettingRow icon={Globe} label="Region" desc="India" onClick={() => {}} />
+        <SettingRow icon={Languages} label="Language" desc={language} onClick={() => showToast('Feature coming soon!')} />
+        <SettingRow icon={Globe} label="Region" desc="India" onClick={() => showToast('Feature coming soon!')} />
       </div>
 
       <SectionHeader title="Accessibility" />
       <div className="settings-list">
-        <SettingRow icon={Accessibility} label="Alt Text" desc="Auto-generate alt text for images" onClick={() => {}} />
-        <SettingRow icon={Monitor} label="Reduce Motion" desc="Minimize animations" onClick={() => {}} />
-        <SettingRow icon={Eye} label="High Contrast" desc="Increase visual contrast" onClick={() => {}} />
+        <SettingRow icon={Accessibility} label="Alt Text" desc="Auto-generate alt text for images" onClick={() => showToast('Feature coming soon!')} />
+        <SettingRow icon={Monitor} label="Reduce Motion" desc="Minimize animations" onClick={() => showToast('Feature coming soon!')} />
+        <SettingRow icon={Eye} label="High Contrast" desc="Increase visual contrast" onClick={() => showToast('Feature coming soon!')} />
       </div>
     </div>
   );
 
+  /* ─── Render about ─── */
   const renderAbout = () => (
     <div className="settings-section-body">
       <SectionHeader title="Legal" />
       <div className="settings-list">
-        <SettingRow icon={BookOpen} label="Privacy Policy" onClick={() => {}} />
-        <SettingRow icon={BookOpen} label="Terms of Service" onClick={() => {}} />
-        <SettingRow icon={BookOpen} label="Cookie Policy" onClick={() => {}} />
-        <SettingRow icon={BookOpen} label="Community Guidelines" onClick={() => {}} />
+        <SettingRow icon={BookOpen} label="Privacy Policy" onClick={() => showToast('Opening soon...')} />
+        <SettingRow icon={BookOpen} label="Terms of Service" onClick={() => showToast('Opening soon...')} />
+        <SettingRow icon={BookOpen} label="Cookie Policy" onClick={() => showToast('Opening soon...')} />
+        <SettingRow icon={BookOpen} label="Community Guidelines" onClick={() => showToast('Opening soon...')} />
       </div>
 
       <SectionHeader title="Support" />
       <div className="settings-list">
-        <SettingRow icon={HelpCircle} label="Help Center" onClick={() => {}} />
-        <SettingRow icon={Flag} label="Report a Problem" onClick={() => {}} />
-        <SettingRow icon={MessageCircle} label="Give Feedback" onClick={() => {}} />
+        <SettingRow icon={HelpCircle} label="Help Center" onClick={() => showToast('Opening soon...')} />
+        <SettingRow icon={Flag} label="Report a Problem" onClick={() => showToast('Opening soon...')} />
+        <SettingRow icon={MessageCircle} label="Give Feedback" onClick={() => showToast('Thank you for using IsmailGram! 💜')} />
       </div>
 
       <SectionHeader title="App Info" />
       <div className="settings-list">
         <SettingRow icon={Info} label="App Version" right={<span style={{ fontSize: 13, color: 'var(--text-muted)' }}>2.0.0</span>} />
-        <SettingRow icon={Info} label="Build" right={<span style={{ fontSize: 13, color: 'var(--text-muted)' }}>2026.10.16</span>} />
+        <SettingRow icon={Info} label="Build"        right={<span style={{ fontSize: 13, color: 'var(--text-muted)' }}>2026.10.30</span>} />
       </div>
     </div>
   );
 
   const sectionContent = {
-    account: { title: 'Account', render: renderAccount },
-    privacy: { title: 'Privacy', render: renderPrivacy },
-    notifications: { title: 'Notifications', render: renderNotifications },
-    security: { title: 'Security', render: renderSecurity },
-    appearance: { title: 'Appearance', render: renderAppearance },
-    content: { title: 'Content & Display', render: renderContent },
-    about: { title: 'About', render: renderAbout },
+    account:       { title: 'Account',          render: renderAccount },
+    privacy:       { title: 'Privacy',           render: renderPrivacy },
+    notifications: { title: 'Notifications',     render: renderNotifications },
+    security:      { title: 'Security',          render: renderSecurity },
+    appearance:    { title: 'Appearance',        render: renderAppearance },
+    content:       { title: 'Content & Display', render: renderContent },
+    about:         { title: 'About',             render: renderAbout },
   };
 
   return (
@@ -517,6 +581,11 @@ export default function Settings() {
           ? renderHome()
           : sectionContent[activeSection]?.render()}
       </div>
+
+      {/* In-page toast */}
+      {toast && (
+        <div className="settings-toast">{toast}</div>
+      )}
 
       {/* Delete confirm */}
       {showDeleteConfirm && (

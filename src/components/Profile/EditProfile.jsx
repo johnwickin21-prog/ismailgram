@@ -60,7 +60,7 @@ export default function EditProfile({ onClose }) {
       if (avatarFile) {
         const ext = avatarFile.name?.split('.').pop() || 'jpg';
         const path = `${user.id}/${Date.now()}.${ext}`;
-        const { data, uploadError } = await supabase.storage.from('avatars').upload(path, avatarFile, {
+        const { data, error: uploadError } = await supabase.storage.from('avatars').upload(path, avatarFile, {
           cacheControl: '3600',
           upsert: true,
           contentType: avatarFile.type,

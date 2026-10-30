@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Grid3X3, Bookmark, Video, Heart, MessageCircle, BadgeCheck, Link, Settings } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useApp } from '../context/AppContext';
@@ -14,6 +15,7 @@ const TABS = [
 
 export default function Profile() {
   const { user } = useAuth();
+  const navigate = useNavigate();
   const { posts } = useApp();
   const [activeTab, setActiveTab] = useState('posts');
   const [showEdit, setShowEdit] = useState(false);
@@ -94,7 +96,7 @@ export default function Profile() {
               <button className="btn btn-secondary btn-sm">
                 View Archive
               </button>
-              <button className="btn btn-ghost" style={{ padding: '6px 8px' }}>
+              <button className="btn btn-ghost" style={{ padding: '6px 8px' }} onClick={() => navigate('/settings')}>
                 <Settings size={20} />
               </button>
             </div>

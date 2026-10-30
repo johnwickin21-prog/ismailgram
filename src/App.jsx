@@ -16,6 +16,31 @@ import Notifications from './pages/Notifications';
 import Profile from './pages/Profile';
 import Settings from './pages/Settings';
 
+/* ── Restore saved theme & font size on startup ── */
+(function restoreSettings() {
+  try {
+    const s = JSON.parse(localStorage.getItem('ismailgram_settings') || '{}');
+    const html = document.documentElement;
+
+    // Theme
+    html.classList.remove('dark', 'light');
+    const theme = s.theme || 'light';
+    if (theme === 'dark') {
+      html.classList.add('dark');
+    } else if (theme === 'auto') {
+      if (window.matchMedia('(prefers-color-scheme: dark)').matches) html.classList.add('dark');
+      else html.classList.add('light');
+    } else {
+      html.classList.add('light');
+    }
+
+    // Font size
+    html.classList.remove('font-small', 'font-medium', 'font-large');
+    html.classList.add(`font-${s.fontSize || 'medium'}`);
+  } catch { /* ignore */ }
+})();
+
+
 function ProtectedLayout() {
   const [showCreate, setShowCreate] = useState(false);
   const { toasts } = useApp();

@@ -45,6 +45,33 @@
 }
 
 /* ============================================
+   DARK MODE — applied via html.dark class
+   ============================================ */
+html.dark {
+  --bg-primary:    #0a0a0a;
+  --bg-secondary:  #121212;
+  --bg-tertiary:   #1e1e1e;
+  --bg-card:       #1a1a1a;
+  --bg-hover:      #222222;
+  --bg-input:      #2a2a2a;
+  --bg-modal:      rgba(0,0,0,0.8);
+
+  --border:        #2e2e2e;
+  --border-light:  #1e1e1e;
+
+  --text-primary:  #fafafa;
+  --text-secondary:#a8a8a8;
+  --text-muted:    #737373;
+}
+
+/* ============================================
+   FONT SIZE MODIFIERS
+   ============================================ */
+html.font-small  { font-size: 13px; }
+html.font-medium { font-size: 15px; }
+html.font-large  { font-size: 17px; }
+
+/* ============================================
    RESET & BASE
    ============================================ */
 *, *::before, *::after {
@@ -3326,4 +3353,29 @@ ul, ol { list-style: none; }
   color: white;
   border-color: transparent;
   box-shadow: 0 2px 8px rgba(131,58,180,0.3);
+}
+
+/* ============================================
+   SETTINGS TOAST
+   ============================================ */
+.settings-toast {
+  position: fixed;
+  bottom: 90px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--text-primary);
+  color: var(--bg-primary);
+  padding: 10px 20px;
+  border-radius: var(--radius-full);
+  font-size: 13px;
+  font-weight: 600;
+  z-index: 9999;
+  animation: toastIn 0.25s ease;
+  white-space: nowrap;
+  box-shadow: var(--shadow-lg);
+}
+
+@keyframes toastIn {
+  from { opacity: 0; transform: translateX(-50%) translateY(10px); }
+  to   { opacity: 1; transform: translateX(-50%) translateY(0); }
 }
